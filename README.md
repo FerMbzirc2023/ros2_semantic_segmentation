@@ -8,7 +8,7 @@ ROS 2 package for semantic segmentation.
 
 ## Running the node
 ```
-ros2 run ros2_semantic_segmentation segment.py  
+ros2 run ros2_semantic_segmentation segment 
 ```
 
 ## MBZIRC color codes
