@@ -19,7 +19,7 @@ class SemanticSegmentation(Node):
         self.publisher = self.create_publisher(Image, '/segmentation_mask', 1)
         self.bridge = CvBridge()
 
-        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/valid_data2'
+        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/zdenka_model_suction'
         self.deeplab_predict = DeeplabInference(self.model_path, ros_structure=True)
         self.get_logger().info('Model loaded')
 
