@@ -27,3 +27,14 @@ ros2 run ros2_semantic_segmentation segment
 |10     | small case                  | (0, 100, 0)     |
 |11     | small dry bag               | (0, 0, 100)     |
 |12     | small dry bag handles       | (0, 100, 100)   |
+
+
+## MBZIRC scenario color codes
+
+| ID    | Object                      | Color Code      |
+| ------| ----------------------------| --------------- |
+|1      | large ammo can handles      | (255,255,255)   |
+|2      | large crate handles         | (255,0,0)       |
+|3      | large dry box handles       | (0,255,0)       |
+|4      | small blue box              | (0,0,255)       |
+|5      | small dry bag handles       | (0, 255, 255)   |
