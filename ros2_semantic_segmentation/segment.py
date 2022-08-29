@@ -27,17 +27,22 @@ class SemanticSegmentation(Node):
         self.deeplab_predict = DeeplabInference(self.model_path, ros_structure=True)
         self.get_logger().info('Model loaded')
 
+        self. mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
+
     def state_callback(self, msg):
         self.state = msg.data
-        self.get_logger().info(self.state)
 
     def image_callback(self, msg):
         if self.state =="SEARCH" or self.state == "SERVO":
             self.get_logger().info('New msg')
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
+
+            # mask suction gripper
+            img = cv2.bitwise_and(img, img, mask = self.mask)    
             img = img[:,80:560,:]
-            
+
+            # inference        
             mask = self.deeplab_predict.predict(img)
             mask = mask.astype(np.uint8)
             mask_msg = self.bridge.cv2_to_imgmsg(mask, 'rgb8')
