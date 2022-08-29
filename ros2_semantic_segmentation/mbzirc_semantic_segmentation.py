@@ -17,7 +17,6 @@ from .centroid_tracker import CentroidTracker
 
 
 class SemanticSegmentation(Node):
-
     def __init__(self):
         super().__init__('semantic_segmentation')
         self.state_sub_ = self.create_subscription(String, '/uav1/state', self.state_callback, 1)
@@ -41,7 +40,22 @@ class SemanticSegmentation(Node):
         self.small_target_identified = False
         self.targets_identified = False
 
-        self.tracker = CentroidTracker()
+        self.color_codes =	{
+            1: (255,255,255),
+            2: (255,0,0),
+            3: (0,255,0),
+            4: (0,0,255),
+            5: (0, 255, 255),
+        }
+
+        self.object_ids =	{
+            1: 'LargeAmmoCanHandles',
+            2: 'LargeCrateHandles',
+            3: 'LargeDryBoxHandles',
+            4: 'SmallBlueBox',
+            5: 'SmallDryBagHandle',
+        }
+        self.trackers = [CentroidTracker() for i in range(5)]
 
     def state_callback(self, msg):
         self.state = msg.data
@@ -69,51 +83,56 @@ class SemanticSegmentation(Node):
             # find centroids
             if self.state == 'SEARCH':
                 if not self.targets_identified:
+                    for i in range(5):
+                        mask = np.where(np.all(self.seg_mask == self.color_codes[i+1], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
+                        mask = mask[:,:,0].astype(np.uint8)
 
-                    mask = np.where(np.all(self.seg_mask == [255, 0, 0], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
-                    mask = mask[:,:,0].astype(np.uint8)
+                        #find contours
+                        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                        max_cnt = []
+                        centroids = []
 
-                    #find contours
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                    max_cnt = []
-                    centroids = []
+                        if len(contours) != 0:
+                            self.get_logger().info('Contours found')
+                            #cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
 
-                    if len(contours) != 0:
-                        self.get_logger().info('Contours found')
-                        cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
-
-                        c_sorted = sorted(contours, key=cv2.contourArea)
-                        max_cnt.append(c_sorted[-1])
-                        if len(contours) >= 2:
-                            max_cnt.append(c_sorted[-2])
-                    
-                    for c in max_cnt:
-                        x,y,w,h = cv2.boundingRect(c)
-                        cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
-
-                        moments = cv2.moments(c)
-                        cX = int(moments["m10"] / moments["m00"])
-                        cY = int(moments["m01"] / moments["m00"])	
-   
-                        centroids.append((cX,cY))
-                        #cv2.circle(self.seg_mask, (cX, cY), 7, (150, 150, 150), -1)
-
-                    objects = self.tracker.update(centroids)
-                    for (objectID, centroid) in objects.items():
-                        text = "ID {}".format(objectID)
-                        cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
+                            c_sorted = sorted(contours, key=cv2.contourArea)
+                            max_cnt.append(c_sorted[-1])
+                            if len(contours) >= 2:
+                                max_cnt.append(c_sorted[-2])
                         
+                        for c in max_cnt:
+                            if cv2.contourArea(c) > 30:
+                                x,y,w,h = cv2.boundingRect(c)
+                                #cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+
+                                moments = cv2.moments(c)
+                                if moments["m00"] > 0:
+                                    cX = int(moments["m10"] / moments["m00"])
+                                    cY = int(moments["m01"] / moments["m00"])	
+            
+                                    centroids.append((cX,cY))
+
+                        objects = self.trackers[i].update(centroids)
+                        for (objectID, centroid) in objects.items():
+                            text = "ID {}".format(objectID)
+                            cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            text = self.object_ids[i+1]
+                            cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
+
                     mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
                     self.centroid_img_pub_.publish(mask_msg)
 
 
                     if not self.small_target_identified:
                         pass
-                        # provjeri je li isti plavi detektiran 2 puta, salji operateru, wait for msg, postavi zastavicu, postavi poziciju plavog
+                        # trackers 0 i 1, salji operateru, wait for msg, postavi zastavicu, postavi poziciju plavog
                     
-                    # plavi potvrdjen i crni bilo koji detektiran 2 puta: salji operateru, wait for msg, postavi zastavicu
+                    # plavi potvrdjen
+                    #  i crni bilo koji detektiran 2 puta: salji operateru, wait for msg, postavi zastavicu
 
             elif self.state == 'SERVO':
                 pass
