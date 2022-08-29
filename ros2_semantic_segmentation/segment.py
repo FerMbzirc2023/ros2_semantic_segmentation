@@ -14,21 +14,20 @@ class SemanticSegmentation(Node):
 
     def __init__(self):
         super().__init__('semantic_segmentation')
-        self.subscription = self.create_subscription(String, '/uav1/state', self.state_callback, 1)
-        self.subscription = self.create_subscription(Image, '/uav1/slot3/image_raw', self.image_callback, 1)
-        self.subscription  # prevent unused variable warning
+        self.state_sub_ = self.create_subscription(String, '/uav1/state', self.state_callback, 1)
+        self.image_sub_ = self.create_subscription(Image, '/uav1/slot3/image_raw', self.image_callback, 1)
 
-        self.state = "IDLE"
-
-        self.publisher = self.create_publisher(Image, '/segmentation_mask', 1)
+        self.mask_pub_ = self.create_publisher(Image, '/segmentation_mask', 1)
+        
         self.bridge = CvBridge()
 
         self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/scenario_model'
         self.deeplab_predict = DeeplabInference(self.model_path, ros_structure=True)
         self.get_logger().info('Model loaded')
 
-        self. mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
-
+        self.mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
+        self.state = "IDLE"
+        
     def state_callback(self, msg):
         self.state = msg.data
 
@@ -47,17 +46,17 @@ class SemanticSegmentation(Node):
             mask = mask.astype(np.uint8)
             mask_msg = self.bridge.cv2_to_imgmsg(mask, 'rgb8')
             mask_msg.header = msg.header
-            self.publisher.publish(mask_msg)
+            self.mask_pub.publish(mask_msg)
             self.get_logger().info('Published segmentation mask')
 
 
 def main(args=None):
     rclpy.init(args=args)
 
-    minimal_subscriber = SemanticSegmentation()
-    rclpy.spin(minimal_subscriber)
+    semantic_segmentation = SemanticSegmentation()
+    rclpy.spin(semantic_segmentation)
 
-    minimal_subscriber.destroy_node()
+    semantic_segmentation.destroy_node()
     rclpy.shutdown()
 
 
