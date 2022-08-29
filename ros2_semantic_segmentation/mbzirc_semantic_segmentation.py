@@ -13,6 +13,7 @@ import cv2
 from cv_bridge import CvBridge
 
 from .run_deeplab import DeeplabInference
+from .centroid_tracker import CentroidTracker
 
 
 class SemanticSegmentation(Node):
@@ -39,6 +40,8 @@ class SemanticSegmentation(Node):
         self.counter = 0
         self.small_target_identified = False
         self.targets_identified = False
+
+        self.tracker = CentroidTracker()
 
     def state_callback(self, msg):
         self.state = msg.data
@@ -73,6 +76,7 @@ class SemanticSegmentation(Node):
                     #find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                     max_cnt = []
+                    centroids = []
 
                     if len(contours) != 0:
                         self.get_logger().info('Contours found')
@@ -91,10 +95,16 @@ class SemanticSegmentation(Node):
                         cX = int(moments["m10"] / moments["m00"])
                         cY = int(moments["m01"] / moments["m00"])	
    
-                        self.detected_px_position_ = [cX, cY]
-                        cv2.circle(self.seg_mask, (cX, cY), 7, (150, 150, 150), -1)
+                        centroids.append((cX,cY))
+                        #cv2.circle(self.seg_mask, (cX, cY), 7, (150, 150, 150), -1)
 
-
+                    objects = self.tracker.update(centroids)
+                    for (objectID, centroid) in objects.items():
+                        text = "ID {}".format(objectID)
+                        cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
+                        
                     mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
                     self.centroid_img_pub_.publish(mask_msg)
 
