@@ -5,6 +5,8 @@ ROS 2 package for semantic segmentation.
 
 * opencv-python
 * tensorflow
+* message_filters
+* ros2_numpy
 
 ## Running the node
 ```
