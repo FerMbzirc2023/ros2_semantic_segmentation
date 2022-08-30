@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 import numpy as np
 # import ros2_numpy as rnp
+import message_filters
 
 from sensor_msgs.msg import Image, PointCloud2
 from ros_ign_interfaces.msg import StringVec
@@ -21,7 +22,12 @@ class SemanticSegmentation(Node):
         super().__init__('semantic_segmentation')
         self.state_sub_ = self.create_subscription(String, '/uav1/state', self.state_callback, 1)
         self.status_sub_ = self.create_subscription(String, '/mbzirc/target/stream/status', self.status_callback, 1)
-        self.image_sub_ = self.create_subscription(Image, '/uav1/slot3/image_raw', self.image_callback, 1) # TODO: message filters for time synchronization
+        
+        self.sync_image_sub_ = message_filters.Subscriber(self, Image, '/uav1/slot3/image_raw')
+        self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, '/uav1/slot3/points')
+        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
+        
+        self.image_sub_ = self.create_subscription(Image, '/uav1/slot3/image_raw', self.image_callback, 1) 
 
         self.state_pub_ = self.create_publisher(String, '/uav1/state', 1)
         self.seg_mask_pub_ = self.create_publisher(Image, '/segmentation_mask', 1)
@@ -38,10 +44,12 @@ class SemanticSegmentation(Node):
         self.gripper_mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
         
         self.state = "SEARCH"   # testing, set to IDLE!!
-        self.counter = 0
         self.small_target_identified = False
         self.targets_identified = False
         self.waiting_for_response = False
+
+        self.small_target_id = 0
+        self.large_target_id = 0
 
         self.color_codes =	{
             1: (255,255,255),
@@ -64,6 +72,15 @@ class SemanticSegmentation(Node):
         print("New state: " + msg.data)
         self.state = msg.data
 
+        if self.state == 'SEARCH':
+            self.small_target_identified = False
+            self.targets_identified = False
+
+        elif self.state == 'SERVO':
+            self.target_tracker = CentroidTracker()
+            self.target_tracker.update(self.small_target_centroid)
+            self.ts.registerCallback(self.sync_callback)
+
     def status_callback(self, msg):
         print("Recieved target report status: " + msg.data)
         self.waiting_for_response = False
@@ -75,8 +92,60 @@ class SemanticSegmentation(Node):
             state_msg.data = 'SERVO'
             self.state_pub_.publish(state_msg)
 
+    def sync_callback(self, img_msg, pc_msg):
+        if self.state == 'SERVO':
+            img = self.bridge.imgmsg_to_cv2(img_msg, 'bgr8')
+            img = img.astype("float32")
+
+            # mask suction gripper
+            img = cv2.bitwise_and(img, img, mask = self.gripper_mask)    
+            img = img[:,80:560,:]
+
+            # inference        
+            self.seg_mask = self.deeplab_predict.predict(img)
+            self.seg_mask = self.seg_mask.astype(np.uint8)
+            mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
+            mask_msg.header = img_msg.header
+            self.seg_mask_pub_.publish(mask_msg)
+
+            mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_centroid], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
+            mask = mask[:,:,0].astype(np.uint8)
+
+            # find contours
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            centroids = []
+
+            if len(contours) != 0:
+                # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
+
+                for c in contours:
+                    if cv2.contourArea(c) > 30:
+                        # x,y,w,h = cv2.boundingRect(c)
+                        # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+
+                        moments = cv2.moments(c)
+                        if moments["m00"] > 0:
+                            cX = int(moments["m10"] / moments["m00"])
+                            cY = int(moments["m01"] / moments["m00"])	
+
+                            centroids.append((cX,cY))
+
+            objects = self.target_tracker.update(centroids)
+            for (objectID, centroid) in objects.items():
+                text = "ID {}".format(objectID)
+                cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                text = self.object_ids[self.small_target_id]
+                cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
+
+            # pratit centroid iz slike (postojeci tracker), pogledati hsv filter
+            # upogoniti ros2_numpy 
+            # iz pointclouda izvuc poziciju, objaviti na topic
+
     def image_callback(self, msg):
-        if self.state =="SEARCH" or self.state == "SERVO":
+        if self.state =="SEARCH":
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
 
@@ -91,85 +160,77 @@ class SemanticSegmentation(Node):
             mask_msg.header = msg.header
             self.seg_mask_pub_.publish(mask_msg)
 
-            self.counter += 1
-
             # track centroids
-            if self.state == 'SEARCH':
-                if not self.targets_identified:
-                    for i in range(5):
-                        mask = np.where(np.all(self.seg_mask == self.color_codes[i+1], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
-                        mask = mask[:,:,0].astype(np.uint8)
+            if not self.targets_identified:
+                for i in range(5):
+                    mask = np.where(np.all(self.seg_mask == self.color_codes[i+1], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
+                    mask = mask[:,:,0].astype(np.uint8)
 
-                        # find contours
-                        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                        max_cnt = []
-                        centroids = []
+                    # find contours
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                    max_cnt = []
+                    centroids = []
 
-                        if len(contours) != 0:
-                            # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
+                    if len(contours) != 0:
+                        # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
 
-                            c_sorted = sorted(contours, key=cv2.contourArea)
-                            max_cnt.append(c_sorted[-1])
-                            if len(contours) >= 2:
-                                max_cnt.append(c_sorted[-2])
-                        
-                        for c in max_cnt:
-                            if cv2.contourArea(c) > 30:
-                                x,y,w,h = cv2.boundingRect(c)
-                                # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+                        c_sorted = sorted(contours, key=cv2.contourArea)
+                        max_cnt.append(c_sorted[-1])
+                        if len(contours) >= 2:
+                            max_cnt.append(c_sorted[-2])
+                    
+                    for c in max_cnt:
+                        if cv2.contourArea(c) > 30:
+                            x,y,w,h = cv2.boundingRect(c)
+                            # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
 
-                                moments = cv2.moments(c)
-                                if moments["m00"] > 0:
-                                    cX = int(moments["m10"] / moments["m00"])
-                                    cY = int(moments["m01"] / moments["m00"])	
-            
-                                    centroids.append((cX,cY))
+                            moments = cv2.moments(c)
+                            if moments["m00"] > 0:
+                                cX = int(moments["m10"] / moments["m00"])
+                                cY = int(moments["m01"] / moments["m00"])	
+        
+                                centroids.append((cX,cY))
 
-                        objects = self.trackers[i].update(centroids)
-                        for (objectID, centroid) in objects.items():
-                            text = "ID {}".format(objectID)
-                            cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                            text = self.object_ids[i+1]
-                            cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                            cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
+                    objects = self.trackers[i].update(centroids)
+                    for (objectID, centroid) in objects.items():
+                        text = "ID {}".format(objectID)
+                        cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                        text = self.object_ids[i+1]
+                        cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                        cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
 
-                    if not self.waiting_for_response and not self.small_target_identified:
-                        for i in range(3,5):
-                            if self.trackers[i].confirmed:
-                                self.small_target_centroid = self.trackers[i].confirmedCentroid
+                if not self.waiting_for_response and not self.small_target_identified:
+                    for i in range(3,5):
+                        if self.trackers[i].confirmed:
+                            self.small_target_centroid = self.trackers[i].confirmedCentroid
+                            self.small_target_id = i+1
 
-                                print("Reporting object " + self.object_ids[i+1])
-                                cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
+                            print("Reporting object " + self.object_ids[i+1])
+                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
 
-                                report = StringVec()
-                                report.data = ['small', str(int(self.small_target_centroid[0])), str(int(self.small_target_centroid[1]))]
-                                self.report_pub_.publish(report)
-                                self.waiting_for_response = True
+                            report = StringVec()
+                            report.data = ['small', str(int(self.small_target_centroid[0])), str(int(self.small_target_centroid[1]))]
+                            self.report_pub_.publish(report)
+                            self.waiting_for_response = True
 
-                    if not self.waiting_for_response and self.small_target_identified:
-                        for i in range(3):
-                            if self.trackers[i].confirmed:
-                                self.large_target_centroid = self.trackers[i].confirmedCentroid
+                if not self.waiting_for_response and self.small_target_identified:
+                    for i in range(3):
+                        if self.trackers[i].confirmed:
+                            self.large_target_centroid = self.trackers[i].confirmedCentroid
+                            self.large_target_id = i+1
 
-                                print("Reporting object " + self.object_ids[i+1])
-                                cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
+                            print("Reporting object " + self.object_ids[i+1])
+                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
 
-                                report = StringVec()
-                                report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
-                                self.report_pub_.publish(report)
-                                self.waiting_for_response = True
+                            report = StringVec()
+                            report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
+                            self.report_pub_.publish(report)
+                            self.waiting_for_response = True
 
-                    mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
-                    self.centroid_img_pub_.publish(mask_msg)
-
-            elif self.state == 'SERVO':
-                pass
-                # pocetni centroid imas, od novih detektiranih velicine iznad nekog delta, objavi poziciju onog blizeg prethodnom
-
-    def pointcloud_callback():
-        pass
+                mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
+                self.centroid_img_pub_.publish(mask_msg)
 
 
 def main(args=None):
