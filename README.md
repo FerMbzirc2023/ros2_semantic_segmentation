@@ -1,12 +1,15 @@
 # ros2_semantic_segmentation
 ROS 2 package for semantic segmentation.
 
-## Dependencies
-
-* opencv-python
-* tensorflow
-* message_filters
-* ros2_numpy
+## Installing dependencies
+```
+pip3 install opencv-pyton, tensorflow, scipy
+sudo apt install ros-galactic-message-filters
+cd /path/to/catkin_ws/src
+git clone https://github.com/Box-Robotics/ros2_numpy 
+cd ..
+rosdep install -r --from-paths src -i -y --rosdistro galactic 
+```
 
 ## Running the node
 ```
