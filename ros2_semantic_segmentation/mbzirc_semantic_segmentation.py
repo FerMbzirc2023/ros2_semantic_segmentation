@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
 
+import time
+
 import math
 import numpy as np
 import ros2_numpy as rnp
@@ -70,6 +72,8 @@ class SemanticSegmentation(Node):
         }
         self.trackers = [CentroidTracker() for i in range(5)]
 
+        self.large_object_timeout = 10
+
     def state_callback(self, msg):
         self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
@@ -87,6 +91,7 @@ class SemanticSegmentation(Node):
         self.waiting_for_response = False
         if msg.data == 'small_object_id_success':
             self.small_target_identified = True
+            self.start_time = time.time()
         elif msg.data == 'large_object_id_success':
             self.targets_identified = True
             req = ChangeState.Request()
@@ -172,7 +177,17 @@ class SemanticSegmentation(Node):
                             report = StringVec()
                             report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
                             self.report_pub_.publish(report)
-                            self.waiting_for_response = True
+                            #self.waiting_for_response = True
+                    
+                    # timeout occured
+                    time_delta = time.time() - self.start_time
+                    print(time_delta)
+                    if time_delta > self.large_object_timeout:
+                        self.get_logger().info("Large object not identified, moving to SERVOING")
+                        req = ChangeState.Request()
+                        req.state = 'SERVOING'
+                        self.change_state_client_.call_async(req)
+
 
             if self.state == 'SERVOING':
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
