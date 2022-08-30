@@ -99,7 +99,7 @@ class SemanticSegmentation(Node):
         #self.get_logger().info("Entered sync callback!")
 
         if self.state =="SEARCH" or self.state == 'SERVOING':
-            self.get_logger().info("Entered!".format(msg.data))
+            self.get_logger().debug("Entered!".format(msg.data))
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
 
@@ -187,6 +187,7 @@ class SemanticSegmentation(Node):
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                 centroids = []
 
+
                 if len(contours) != 0:
                     # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
 
@@ -201,6 +202,12 @@ class SemanticSegmentation(Node):
                                 cY = int(moments["m01"] / moments["m00"])	
 
                                 centroids.append((cX,cY))
+                        else: 
+                            self.get_logger().warn("Contours of an object too small!")
+
+                else: 
+                    self.get_logger().warn("No centroids found!")
+
 
                 if len(centroids) != 0:
                     objects = self.target_tracker.update(centroids)
@@ -222,6 +229,10 @@ class SemanticSegmentation(Node):
                         point_msg.point.y = float(y)
                         point_msg.point.z = float(z)
                         self.centroid_pub_.publish(point_msg)
+                    
+                    else: 
+                        self.get_logger().warn("Too far from an object!".format(msg.data))
+
 
             mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
             self.centroid_img_pub_.publish(mask_msg)
