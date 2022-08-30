@@ -71,7 +71,7 @@ class SemanticSegmentation(Node):
         self.trackers = [CentroidTracker() for i in range(5)]
 
     def state_callback(self, msg):
-        #self.get_logger().info("New state: {}".format(msg.data))
+        self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
 
         if self.state == 'SEARCH':
@@ -157,8 +157,6 @@ class SemanticSegmentation(Node):
                             self.small_target_id = i+1
 
                             print("Reporting object " + self.object_ids[i+1])
-                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
-
                             report = StringVec()
                             report.data = ['small', str(int(self.small_target_centroid[0])), str(int(self.small_target_centroid[1]))]
                             self.report_pub_.publish(report)
@@ -171,8 +169,6 @@ class SemanticSegmentation(Node):
                             self.large_target_id = i+1
 
                             print("Reporting object " + self.object_ids[i+1])
-                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
-
                             report = StringVec()
                             report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
                             self.report_pub_.publish(report)
