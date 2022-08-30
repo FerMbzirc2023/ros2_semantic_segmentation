@@ -25,9 +25,8 @@ class SemanticSegmentation(Node):
         
         self.sync_image_sub_ = message_filters.Subscriber(self, Image, '/uav1/slot3/image_raw')
         self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, '/uav1/slot3/points')
-        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
-        
-        self.image_sub_ = self.create_subscription(Image, '/uav1/slot3/image_raw', self.image_callback, 1) 
+        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 10)
+        self.ts.registerCallback(self.sync_callback)
 
         self.state_pub_ = self.create_publisher(String, '/uav1/state', 1)
         self.seg_mask_pub_ = self.create_publisher(Image, '/segmentation_mask', 1)
@@ -78,8 +77,7 @@ class SemanticSegmentation(Node):
 
         elif self.state == 'SERVO':
             self.target_tracker = CentroidTracker()
-            self.target_tracker.update(self.small_target_centroid)
-            self.ts.registerCallback(self.sync_callback)
+            self.target_tracker.update([self.small_target_centroid])
 
     def status_callback(self, msg):
         print("Recieved target report status: " + msg.data)
@@ -92,60 +90,8 @@ class SemanticSegmentation(Node):
             state_msg.data = 'SERVO'
             self.state_pub_.publish(state_msg)
 
-    def sync_callback(self, img_msg, pc_msg):
-        if self.state == 'SERVO':
-            img = self.bridge.imgmsg_to_cv2(img_msg, 'bgr8')
-            img = img.astype("float32")
-
-            # mask suction gripper
-            img = cv2.bitwise_and(img, img, mask = self.gripper_mask)    
-            img = img[:,80:560,:]
-
-            # inference        
-            self.seg_mask = self.deeplab_predict.predict(img)
-            self.seg_mask = self.seg_mask.astype(np.uint8)
-            mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
-            mask_msg.header = img_msg.header
-            self.seg_mask_pub_.publish(mask_msg)
-
-            mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_centroid], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
-            mask = mask[:,:,0].astype(np.uint8)
-
-            # find contours
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            centroids = []
-
-            if len(contours) != 0:
-                # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
-
-                for c in contours:
-                    if cv2.contourArea(c) > 30:
-                        # x,y,w,h = cv2.boundingRect(c)
-                        # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
-
-                        moments = cv2.moments(c)
-                        if moments["m00"] > 0:
-                            cX = int(moments["m10"] / moments["m00"])
-                            cY = int(moments["m01"] / moments["m00"])	
-
-                            centroids.append((cX,cY))
-
-            objects = self.target_tracker.update(centroids)
-            for (objectID, centroid) in objects.items():
-                text = "ID {}".format(objectID)
-                cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                text = self.object_ids[self.small_target_id]
-                cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
-
-            # pratit centroid iz slike (postojeci tracker), pogledati hsv filter
-            # upogoniti ros2_numpy 
-            # iz pointclouda izvuc poziciju, objaviti na topic
-
-    def image_callback(self, msg):
-        if self.state =="SEARCH":
+    def sync_callback(self, msg, pc_msg):
+        if self.state =="SEARCH" or self.state == 'SERVO':
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
 
@@ -160,8 +106,8 @@ class SemanticSegmentation(Node):
             mask_msg.header = msg.header
             self.seg_mask_pub_.publish(mask_msg)
 
-            # track centroids
-            if not self.targets_identified:
+            if self.state == 'SEARCH' and not self.targets_identified:
+                # track centroids
                 for i in range(5):
                     mask = np.where(np.all(self.seg_mask == self.color_codes[i+1], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                     mask = mask[:,:,0].astype(np.uint8)
@@ -172,8 +118,6 @@ class SemanticSegmentation(Node):
                     centroids = []
 
                     if len(contours) != 0:
-                        # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
-
                         c_sorted = sorted(contours, key=cv2.contourArea)
                         max_cnt.append(c_sorted[-1])
                         if len(contours) >= 2:
@@ -181,9 +125,6 @@ class SemanticSegmentation(Node):
                     
                     for c in max_cnt:
                         if cv2.contourArea(c) > 30:
-                            x,y,w,h = cv2.boundingRect(c)
-                            # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
-
                             moments = cv2.moments(c)
                             if moments["m00"] > 0:
                                 cX = int(moments["m10"] / moments["m00"])
@@ -191,15 +132,16 @@ class SemanticSegmentation(Node):
         
                                 centroids.append((cX,cY))
 
-                    objects = self.trackers[i].update(centroids)
-                    for (objectID, centroid) in objects.items():
-                        text = "ID {}".format(objectID)
-                        cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                        text = self.object_ids[i+1]
-                        cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                        cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
+                    if len(centroids) != 0:
+                        objects = self.trackers[i].update(centroids)
+                        for (objectID, centroid) in objects.items():
+                            text = "ID {}".format(objectID)
+                            cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            text = self.object_ids[i+1]
+                            cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
 
                 if not self.waiting_for_response and not self.small_target_identified:
                     for i in range(3,5):
@@ -229,8 +171,44 @@ class SemanticSegmentation(Node):
                             self.report_pub_.publish(report)
                             self.waiting_for_response = True
 
-                mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
-                self.centroid_img_pub_.publish(mask_msg)
+            elif self.state == 'SERVO':
+                mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
+                mask = mask[:,:,0].astype(np.uint8)
+
+                # find contours
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                centroids = []
+
+                if len(contours) != 0:
+                    # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
+
+                    for c in contours:
+                        if cv2.contourArea(c) > 30:
+                            # x,y,w,h = cv2.boundingRect(c)
+                            # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+
+                            moments = cv2.moments(c)
+                            if moments["m00"] > 0:
+                                cX = int(moments["m10"] / moments["m00"])
+                                cY = int(moments["m01"] / moments["m00"])	
+
+                                centroids.append((cX,cY))
+
+                if len(centroids) != 0:
+                    objects = self.target_tracker.update(centroids)
+                    target_object_id = min(objects.keys())
+                    self.small_target_centroid = objects[target_object_id]
+
+                    text = "target object"
+                    cv2.putText(self.seg_mask, text, (self.small_target_centroid[0] - 10, self.small_target_centroid[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                    cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 4, (255, 255, 255), -1)
+
+                    # upogoniti ros2_numpy 
+                    # iz pointclouda izvuc poziciju, objaviti na topic
+
+            mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
+            self.centroid_img_pub_.publish(mask_msg)
 
 
 def main(args=None):
