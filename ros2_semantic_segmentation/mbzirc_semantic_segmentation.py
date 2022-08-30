@@ -30,10 +30,10 @@ class SemanticSegmentation(Node):
         self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
         self.ts.registerCallback(self.sync_callback)
 
-        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segentation/segmentation_mask', 1)
-        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segentation/detected_centroids', 1)
+        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segmentation/segmentation_mask', 1)
+        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segmentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
-        self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segentation/detected_point', 1)
+        self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segmentation/detected_point', 1)
 
         self.change_state_client_ = self.create_client(ChangeState, "change_state")
         
@@ -71,14 +71,14 @@ class SemanticSegmentation(Node):
         self.trackers = [CentroidTracker() for i in range(5)]
 
     def state_callback(self, msg):
-        self.get_logger().info("New state: {}".format(msg.data))
+        #self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
 
         if self.state == 'SEARCH':
             self.small_target_identified = False
             self.targets_identified = False
 
-        elif self.state == 'SERVOING':
+        elif self.state == 'SERVOING' or self.state == 'APPROACH':
             self.target_tracker = CentroidTracker()
             self.target_tracker.update([self.small_target_centroid])
 
@@ -174,7 +174,8 @@ class SemanticSegmentation(Node):
                             self.report_pub_.publish(report)
                             self.waiting_for_response = True
 
-            if self.state == 'SERVOING':
+            if self.state == 'SERVOING' or self.state == 'APPROACH':# or self.state == 'APPROACH': 
+                
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                 mask = mask[:,:,0].astype(np.uint8)
 
@@ -187,7 +188,7 @@ class SemanticSegmentation(Node):
                     # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
 
                     for c in contours:
-                        if cv2.contourArea(c) > 30:
+                        if cv2.contourArea(c) > 15:
                             # x,y,w,h = cv2.boundingRect(c)
                             # cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
 
