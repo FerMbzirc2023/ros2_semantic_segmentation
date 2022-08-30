@@ -22,21 +22,20 @@ from .centroid_tracker import CentroidTracker
 class SemanticSegmentation(Node):
     def __init__(self):
         super().__init__('semantic_segmentation')
-        self.state_sub_ = self.create_subscription(String, '/state', self.state_callback, 1)
+        self.state_sub_ = self.create_subscription(String, 'state', self.state_callback, 1)
         self.status_sub_ = self.create_subscription(String, '/mbzirc/target/stream/status', self.status_callback, 1)
         
-        self.sync_image_sub_ = message_filters.Subscriber(self, Image, '/slot3/image_raw')
-        self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, '/slot3/points')
+        self.sync_image_sub_ = message_filters.Subscriber(self, Image, 'slot3/image_raw')
+        self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, 'slot3/points')
         self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
         self.ts.registerCallback(self.sync_callback)
 
-        self.state_pub_ = self.create_publisher(String, '/state', 1)
-        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segentation/segmentation_mask', 1)
-        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segentation/detected_centroids', 1)
-        self.report_pub_ = self.create_publisher(StringVec, '/target_report', 1)
-        self.centroid_pub_ = self.create_publisher(PointStamped, '/semantic_segentation/detected_point', 1)
-        # TODO: Add client that changes state
-        # self.change_state_client_ = self.create_client(ChangeState, "uav1/change_state", 1)
+        self.seg_mask_pub_ = self.create_publisher(Image, 'semantic_segentation/segmentation_mask', 1)
+        self.centroid_img_pub_ = self.create_publisher(Image, 'semantic_segentation/detected_centroids', 1)
+        self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
+        self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segentation/detected_point', 1)
+
+        self.change_state_client_ = self.create_client(ChangeState, "change_state", 1)
         
         self.bridge = CvBridge()
 
@@ -92,7 +91,7 @@ class SemanticSegmentation(Node):
             self.targets_identified = True
             state_msg = String()
             state_msg.data = 'SERVOING'
-            #self.change_state_client_.call(ChangeState(state_msg.data))
+            self.change_state_client_.call(ChangeState(state_msg.data))
             self.state_pub_.publish(state_msg)
 
     def sync_callback(self, msg, pc_msg):
