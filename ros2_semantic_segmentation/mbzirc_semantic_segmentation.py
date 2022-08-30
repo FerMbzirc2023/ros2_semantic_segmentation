@@ -35,6 +35,7 @@ class SemanticSegmentation(Node):
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segentation/detected_point', 1)
 
+        #self.state_pub_ = self.create_publisher(String, 'state', 1)
         self.change_state_client_ = self.create_client(ChangeState, "change_state", 1)
         
         self.bridge = CvBridge()
@@ -71,7 +72,7 @@ class SemanticSegmentation(Node):
         self.trackers = [CentroidTracker() for i in range(5)]
 
     def state_callback(self, msg):
-        #self.get_logger().info("New state: {}".format(msg.data))
+        self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
 
         if self.state == 'SEARCH':
@@ -92,7 +93,7 @@ class SemanticSegmentation(Node):
             state_msg = String()
             state_msg.data = 'SERVOING'
             self.change_state_client_.call(ChangeState(state_msg.data))
-            self.state_pub_.publish(state_msg)
+            # self.state_pub_.publish(state_msg)
 
     def sync_callback(self, msg, pc_msg):
         #self.get_logger().info("Entered sync callback!")
@@ -157,8 +158,6 @@ class SemanticSegmentation(Node):
                             self.small_target_id = i+1
 
                             print("Reporting object " + self.object_ids[i+1])
-                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
-
                             report = StringVec()
                             report.data = ['small', str(int(self.small_target_centroid[0])), str(int(self.small_target_centroid[1]))]
                             self.report_pub_.publish(report)
@@ -171,8 +170,6 @@ class SemanticSegmentation(Node):
                             self.large_target_id = i+1
 
                             print("Reporting object " + self.object_ids[i+1])
-                            cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 7, (0, 255, 0), -1)
-
                             report = StringVec()
                             report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
                             self.report_pub_.publish(report)
