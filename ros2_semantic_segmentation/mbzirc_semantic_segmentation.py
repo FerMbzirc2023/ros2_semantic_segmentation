@@ -10,6 +10,7 @@ from sensor_msgs.msg import Image, PointCloud2
 from ros_ign_interfaces.msg import StringVec
 from geometry_msgs.msg import PointStamped
 from std_msgs.msg import String
+from mbzirc_aerial_manipulation_msgs.srv import ChangeState
 
 import cv2
 from cv_bridge import CvBridge
@@ -34,6 +35,8 @@ class SemanticSegmentation(Node):
         self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, '/uav1/target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, '/semantic_segentation/detected_point', 1)
+        # TODO: Add client that changes state
+        # self.change_state_client_ = self.create_client(ChangeState, "uav1/change_state", 1)
         
         self.bridge = CvBridge()
 
@@ -69,14 +72,14 @@ class SemanticSegmentation(Node):
         self.trackers = [CentroidTracker() for i in range(5)]
 
     def state_callback(self, msg):
-        print("New state: " + msg.data)
+        #self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
 
         if self.state == 'SEARCH':
             self.small_target_identified = False
             self.targets_identified = False
 
-        elif self.state == 'SERVO':
+        elif self.state == 'SERVOING':
             self.target_tracker = CentroidTracker()
             self.target_tracker.update([self.small_target_centroid])
 
@@ -88,11 +91,15 @@ class SemanticSegmentation(Node):
         elif msg.data == 'large_object_id_success':
             self.targets_identified = True
             state_msg = String()
-            state_msg.data = 'SERVO'
+            state_msg.data = 'SERVOING'
+            #self.change_state_client_.call(ChangeState(state_msg.data))
             self.state_pub_.publish(state_msg)
 
     def sync_callback(self, msg, pc_msg):
-        if self.state =="SEARCH" or self.state == 'SERVO':
+        #self.get_logger().info("Entered sync callback!")
+
+        if self.state =="SEARCH" or self.state == 'SERVOING':
+            self.get_logger().info("Entered!".format(msg.data))
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
 
@@ -106,6 +113,7 @@ class SemanticSegmentation(Node):
             mask_msg.header = msg.header
             self.seg_mask_pub_.publish(mask_msg)
 
+            #if self.state == 'SEARCH' and not self.targets_identified:
             if self.state == 'SEARCH' and not self.targets_identified:
                 # track centroids
                 for i in range(5):
@@ -171,7 +179,7 @@ class SemanticSegmentation(Node):
                             self.report_pub_.publish(report)
                             self.waiting_for_response = True
 
-            elif self.state == 'SERVO':
+            if self.state == 'SERVOING':
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                 mask = mask[:,:,0].astype(np.uint8)
 
@@ -203,7 +211,6 @@ class SemanticSegmentation(Node):
                     cv2.putText(self.seg_mask, text, (self.small_target_centroid[0] - 10, self.small_target_centroid[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
                     cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 4, (255, 255, 255), -1)
-
 
                     pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
 

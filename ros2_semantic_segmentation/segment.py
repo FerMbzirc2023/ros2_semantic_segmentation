@@ -21,7 +21,7 @@ class SemanticSegmentation(Node):
         
         self.bridge = CvBridge()
 
-        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/scenario_model'
+        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/scenario_model_shadows_basic'
         self.deeplab_predict = DeeplabInference(self.model_path, ros_structure=True)
         self.get_logger().info('Model loaded')
 
