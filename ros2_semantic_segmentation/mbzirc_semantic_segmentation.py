@@ -1,8 +1,9 @@
 import rclpy
 from rclpy.node import Node
 
+import math
 import numpy as np
-# import ros2_numpy as rnp
+import ros2_numpy as rnp
 import message_filters
 
 from sensor_msgs.msg import Image, PointCloud2
@@ -25,18 +26,18 @@ class SemanticSegmentation(Node):
         
         self.sync_image_sub_ = message_filters.Subscriber(self, Image, '/uav1/slot3/image_raw')
         self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, '/uav1/slot3/points')
-        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 10)
+        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
         self.ts.registerCallback(self.sync_callback)
 
         self.state_pub_ = self.create_publisher(String, '/uav1/state', 1)
-        self.seg_mask_pub_ = self.create_publisher(Image, '/segmentation_mask', 1)
-        self.centroid_img_pub_ = self.create_publisher(Image, '/centroid_tracker/detected_centroids', 1)
+        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segentation/segmentation_mask', 1)
+        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, '/uav1/target_report', 1)
-        self.centroid_pub_ = self.create_publisher(PointStamped, '/centroid_tracker/detected_point', 1)
+        self.centroid_pub_ = self.create_publisher(PointStamped, '/semantic_segentation/detected_point', 1)
         
         self.bridge = CvBridge()
 
-        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/scenario_model_brightness'
+        self.model_path = '/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/models/scenario_model_shadows_basic'
         self.deeplab_predict = DeeplabInference(self.model_path, ros_structure=True)
         self.get_logger().info('Model loaded')
 
@@ -97,7 +98,6 @@ class SemanticSegmentation(Node):
 
             # mask suction gripper
             img = cv2.bitwise_and(img, img, mask = self.gripper_mask)    
-            img = img[:,80:560,:]
 
             # inference        
             self.seg_mask = self.deeplab_predict.predict(img)
@@ -204,8 +204,17 @@ class SemanticSegmentation(Node):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
                     cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 4, (255, 255, 255), -1)
 
-                    # upogoniti ros2_numpy 
-                    # iz pointclouda izvuc poziciju, objaviti na topic
+
+                    pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
+
+                    (x,y,z,_) = pc_array[self.small_target_centroid[1], self.small_target_centroid[0]]
+                    if not math.isinf(x):
+                        point_msg = PointStamped()
+                        point_msg.header = pc_msg.header
+                        point_msg.point.x = float(x)
+                        point_msg.point.y = float(y)
+                        point_msg.point.z = float(z)
+                        self.centroid_pub_.publish(point_msg)
 
             mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
             self.centroid_img_pub_.publish(mask_msg)
