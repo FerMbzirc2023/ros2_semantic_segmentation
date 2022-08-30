@@ -30,12 +30,12 @@ class SemanticSegmentation(Node):
         self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
         self.ts.registerCallback(self.sync_callback)
 
-        self.seg_mask_pub_ = self.create_publisher(Image, 'semantic_segentation/segmentation_mask', 1)
-        self.centroid_img_pub_ = self.create_publisher(Image, 'semantic_segentation/detected_centroids', 1)
+        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segentation/segmentation_mask', 1)
+        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segentation/detected_point', 1)
 
-        self.change_state_client_ = self.create_client(ChangeState, "change_state", 1)
+        self.change_state_client_ = self.create_client(ChangeState, "change_state")
         
         self.bridge = CvBridge()
 
@@ -89,16 +89,16 @@ class SemanticSegmentation(Node):
             self.small_target_identified = True
         elif msg.data == 'large_object_id_success':
             self.targets_identified = True
-            state_msg = String()
-            state_msg.data = 'SERVOING'
-            self.change_state_client_.call(ChangeState(state_msg.data))
-            self.state_pub_.publish(state_msg)
+            req = ChangeState.Request()
+            req.state = 'SERVOING'
+            self.change_state_client_.call_async(req)
+            # Check spin until future complete https://docs.ros.org/en/foxy/Tutorials/Beginner-Client-Libraries/Writing-A-Simple-Py-Service-And-Client.html
 
     def sync_callback(self, msg, pc_msg):
         #self.get_logger().info("Entered sync callback!")
 
         if self.state =="SEARCH" or self.state == 'SERVOING':
-            self.get_logger().debug("Entered!".format(msg.data))
+            #self.get_logger().debug("Entered!".format(msg.data))
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
 
