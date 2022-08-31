@@ -41,7 +41,7 @@ class SemanticSegmentation(Node):
 
         self.gripper_mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
         
-        self.state = "SEARCH"   # testing, set to IDLE!!
+        self.state = "IDLE"  
         self.small_target_identified = False
         self.targets_identified = False
         self.waiting_for_response = False
