@@ -4,7 +4,6 @@ ROS 2 package for semantic segmentation.
 ## Installing dependencies
 ```
 pip3 install opencv-python, tensorflow, scipy
-sudo apt install ros-galactic-message-filters
 cd /path/to/catkin_ws/src
 git clone https://github.com/Box-Robotics/ros2_numpy 
 cd ..
