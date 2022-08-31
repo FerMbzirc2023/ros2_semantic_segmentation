@@ -20,7 +20,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'segment = ros2_semantic_segmentation.segment:main',
             'mbzirc_semantic_segmentation = ros2_semantic_segmentation.mbzirc_semantic_segmentation:main',
             'dummy_operator = ros2_semantic_segmentation.dummy_operator:main'
         ],
