@@ -99,7 +99,7 @@ class SemanticSegmentation(Node):
         # self.get_logger().info("Entered image callback!")
         pc_msg = self.latest_pc_msg
 
-        if self.state =="SEARCH" or self.state == 'SERVOING':
+        if self.state =="SEARCH" or self.state == 'SERVOING' or self.state == 'APPROACH':
             #self.get_logger().debug("Entered!".format(msg.data))
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
