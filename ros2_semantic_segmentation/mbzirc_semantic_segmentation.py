@@ -4,7 +4,6 @@ from rclpy.node import Node
 import math
 import numpy as np
 import ros2_numpy as rnp
-import message_filters
 
 from sensor_msgs.msg import Image, PointCloud2
 from ros_ign_interfaces.msg import StringVec
@@ -24,11 +23,8 @@ class SemanticSegmentation(Node):
         super().__init__('semantic_segmentation')
         self.state_sub_ = self.create_subscription(String, 'state', self.state_callback, 1)
         self.status_sub_ = self.create_subscription(String, '/mbzirc/target/stream/status', self.status_callback, 1)
-        
-        self.sync_image_sub_ = message_filters.Subscriber(self, Image, 'slot3/image_raw')
-        self.sync_pc_sub_ = message_filters.Subscriber(self, PointCloud2, 'slot3/points')
-        self.ts = message_filters.TimeSynchronizer([self.sync_image_sub_, self.sync_pc_sub_], 1)
-        self.ts.registerCallback(self.sync_callback)
+        self.imag_sub_ = self.create_subscription(Image, 'slot3/image_raw', self.image_callback, 1)
+        self.pc_sub_ = self.create_subscription(PointCloud2, 'slot3/points', self.pc_callback, 1)
 
         self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segmentation/segmentation_mask', 1)
         self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segmentation/detected_centroids', 1)
@@ -70,6 +66,8 @@ class SemanticSegmentation(Node):
         }
         self.trackers = [CentroidTracker() for i in range(5)]
 
+        self.latest_pc_msg = None
+
     def state_callback(self, msg):
         #self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
@@ -94,8 +92,12 @@ class SemanticSegmentation(Node):
             self.change_state_client_.call_async(req)
             # Check spin until future complete https://docs.ros.org/en/foxy/Tutorials/Beginner-Client-Libraries/Writing-A-Simple-Py-Service-And-Client.html
 
-    def sync_callback(self, msg, pc_msg):
-        #self.get_logger().info("Entered sync callback!")
+    def pc_callback(self, msg):
+        self.latest_pc_msg = msg
+
+    def image_callback(self, msg):
+        # self.get_logger().info("Entered image callback!")
+        pc_msg = self.latest_pc_msg
 
         if self.state =="SEARCH" or self.state == 'SERVOING':
             #self.get_logger().debug("Entered!".format(msg.data))
@@ -112,7 +114,6 @@ class SemanticSegmentation(Node):
             mask_msg.header = msg.header
             self.seg_mask_pub_.publish(mask_msg)
 
-            #if self.state == 'SEARCH' and not self.targets_identified:
             if self.state == 'SEARCH' and not self.targets_identified:
                 # track centroids
                 for i in range(5):
@@ -174,8 +175,7 @@ class SemanticSegmentation(Node):
                             self.report_pub_.publish(report)
                             self.waiting_for_response = True
 
-            if self.state == 'SERVOING' or self.state == 'APPROACH':# or self.state == 'APPROACH': 
-                
+            if self.latest_pc_msg and (self.state == 'SERVOING' or self.state == 'APPROACH'):
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                 mask = mask[:,:,0].astype(np.uint8)
 
@@ -207,27 +207,28 @@ class SemanticSegmentation(Node):
 
                 if len(centroids) != 0:
                     objects = self.target_tracker.update(centroids)
-                    target_object_id = min(objects.keys())
-                    self.small_target_centroid = objects[target_object_id]
+                    if len(objects.keys()) != 0:
+                        target_object_id = min(objects.keys())
+                        self.small_target_centroid = objects[target_object_id]
 
-                    text = "target object"
-                    cv2.putText(self.seg_mask, text, (self.small_target_centroid[0] - 10, self.small_target_centroid[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                    cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 4, (255, 255, 255), -1)
+                        text = "target object"
+                        cv2.putText(self.seg_mask, text, (self.small_target_centroid[0] - 10, self.small_target_centroid[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                        cv2.circle(self.seg_mask, (self.small_target_centroid[0], self.small_target_centroid[1]), 4, (255, 255, 255), -1)
 
-                    pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
+                        pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
 
-                    (x,y,z,_) = pc_array[self.small_target_centroid[1], self.small_target_centroid[0]]
-                    if not math.isinf(x):
-                        point_msg = PointStamped()
-                        point_msg.header = pc_msg.header
-                        point_msg.point.x = float(x)
-                        point_msg.point.y = float(y)
-                        point_msg.point.z = float(z)
-                        self.centroid_pub_.publish(point_msg)
-                    
-                    else: 
-                        self.get_logger().warn("Too far from an object!".format(msg.data))
+                        (x,y,z,_) = pc_array[self.small_target_centroid[1], self.small_target_centroid[0]]
+                        if not math.isinf(x):
+                            point_msg = PointStamped()
+                            point_msg.header = pc_msg.header
+                            point_msg.point.x = float(x)
+                            point_msg.point.y = float(y)
+                            point_msg.point.z = float(z)
+                            self.centroid_pub_.publish(point_msg)
+                        
+                        else: 
+                            self.get_logger().warn("Too far from an object!".format(msg.data))
 
 
             mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
