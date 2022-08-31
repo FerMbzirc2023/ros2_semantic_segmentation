@@ -26,8 +26,8 @@ class SemanticSegmentation(Node):
         self.imag_sub_ = self.create_subscription(Image, 'slot3/image_raw', self.image_callback, 1)
         self.pc_sub_ = self.create_subscription(PointCloud2, 'slot3/points', self.pc_callback, 1)
 
-        self.seg_mask_pub_ = self.create_publisher(Image, '/semantic_segmentation/segmentation_mask', 1)
-        self.centroid_img_pub_ = self.create_publisher(Image, '/semantic_segmentation/detected_centroids', 1)
+        self.seg_mask_pub_ = self.create_publisher(Image, 'semantic_segmentation/segmentation_mask', 1)
+        self.centroid_img_pub_ = self.create_publisher(Image, 'semantic_segmentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segmentation/detected_point', 1)
 
@@ -96,8 +96,8 @@ class SemanticSegmentation(Node):
         self.latest_pc_msg = msg
 
     def image_callback(self, msg):
-        # self.get_logger().info("Entered image callback!")
         pc_msg = self.latest_pc_msg
+
 
         if self.state =="SEARCH" or self.state == 'SERVOING' or self.state == 'APPROACH':
             #self.get_logger().debug("Entered!".format(msg.data))
