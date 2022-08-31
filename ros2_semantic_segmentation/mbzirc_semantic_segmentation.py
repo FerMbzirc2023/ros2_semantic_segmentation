@@ -122,34 +122,25 @@ class SemanticSegmentation(Node):
 
                     # find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                    max_cnt = []
-                    centroids = []
-
                     if len(contours) != 0:
-                        c_sorted = sorted(contours, key=cv2.contourArea)
-                        max_cnt.append(c_sorted[-1])
-                        if len(contours) >= 2:
-                            max_cnt.append(c_sorted[-2])
-                    
-                    for c in max_cnt:
+                        c = max(contours, key = cv2.contourArea)
+
                         if cv2.contourArea(c) > 30:
                             moments = cv2.moments(c)
+
                             if moments["m00"] > 0:
                                 cX = int(moments["m10"] / moments["m00"])
                                 cY = int(moments["m01"] / moments["m00"])	
-        
-                                centroids.append((cX,cY))
-
-                    if len(centroids) != 0:
-                        objects = self.trackers[i].update(centroids)
-                        for (objectID, centroid) in objects.items():
-                            text = "ID {}".format(objectID)
-                            cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                            text = self.object_ids[i+1]
-                            cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                            cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
+                
+                                objects = self.trackers[i].update([(cX, cY)])
+                                for (objectID, centroid) in objects.items():
+                                    text = "ID {}".format(objectID)
+                                    cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                                    text = self.object_ids[i+1]
+                                    cv2.putText(self.seg_mask, text, (centroid[0] - 20, centroid[1] - 20),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                                    cv2.circle(self.seg_mask, (centroid[0], centroid[1]), 4, (255, 255, 255), -1)
 
                 if not self.waiting_for_response and not self.small_target_identified:
                     for i in range(3,5):

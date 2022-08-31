@@ -1,15 +1,12 @@
 import os
-
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import rospkg
 import tensorflow as tf
-
-from .deeplabv3p_model import create_model
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
   try:
@@ -28,15 +25,7 @@ class DeeplabInference():
                         1: (255, 255, 255),
                         2: (255, 0, 0),
                         3: (0, 255, 0),
-                        4: (0, 0, 255),
-                        5: (0, 255, 255),
-                        6: (255, 0, 255),
-                        7: (255, 255, 0),
-                        8: (100, 100, 100),
-                        9: (100, 0, 0),
-                        10: (0, 100, 0),
-                        11: (0, 0, 100),
-                        12: (0, 100, 100)}   
+                        4: (0, 0, 255)}   
 
   def predict(self, img):
     img_process = img.copy()
@@ -45,9 +34,9 @@ class DeeplabInference():
     img_process[:,:,2] -= self.imagenet_normalization[2]
     img_process = np.expand_dims(img_process, axis=0)
 
-    prediction = self.model.predict(img_process)          # Shape (batch, h, w, channels)
-    prediction = np.squeeze(prediction)                   # Shape (h, w, channels)
-    prediction = np.argmax(prediction, axis=2)            # Shape (index_of_class)
+    prediction = self.model.predict(img_process, verbose=0)          # Shape (batch, h, w, channels)
+    prediction = np.squeeze(prediction)                              # Shape (h, w, channels)
+    prediction = np.argmax(prediction, axis=2)                       # Shape (index_of_class)
 
     mask = img.copy()
     for i in self.mask_id_to_color:
