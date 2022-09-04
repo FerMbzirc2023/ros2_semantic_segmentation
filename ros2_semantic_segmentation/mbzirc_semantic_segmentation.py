@@ -31,7 +31,8 @@ class SemanticSegmentation(Node):
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segmentation/detected_point', 1)
 
-        self.change_state_client_ = self.create_client(ChangeState, "change_state")
+        self.state_pub_ = self.create_publisher(String, 'state', 1)
+        #self.change_state_client_ = self.create_client(ChangeState, "change_state")
         
         self.bridge = CvBridge()
 
@@ -41,7 +42,7 @@ class SemanticSegmentation(Node):
 
         self.gripper_mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
         
-        self.state = "IDLE"  
+        self.state = "SEARCH"  
         self.small_target_identified = False
         self.targets_identified = False
         self.waiting_for_response = False
@@ -68,8 +69,10 @@ class SemanticSegmentation(Node):
 
         self.latest_pc_msg = None
 
+        self.segmentation_states = ['SEARCH', 'SERVOING', 'APPROACH', 'COLLABORATIVE_LIFT', 'COLLABORATIVE_APPROACH']
+
     def state_callback(self, msg):
-        #self.get_logger().info("New state: {}".format(msg.data))
+        self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
 
         if self.state == 'SEARCH':
@@ -79,6 +82,10 @@ class SemanticSegmentation(Node):
         elif self.state == 'SERVOING' or self.state == 'APPROACH':
             self.target_tracker = CentroidTracker()
             self.target_tracker.update([self.small_target_centroid])
+        
+        elif self.state == 'COLLABORATIVE_LIFT' or self.state == 'COLLABORATIVE_APPROACH':
+            self.target_tracker = CentroidTracker()
+            self.target_tracker.update([self.large_target_centroid])
 
     def status_callback(self, msg):
         print("Recieved target report status: " + msg.data)
@@ -87,9 +94,12 @@ class SemanticSegmentation(Node):
             self.small_target_identified = True
         elif msg.data == 'large_object_id_success':
             self.targets_identified = True
-            req = ChangeState.Request()
-            req.state = 'SERVOING'
-            self.change_state_client_.call_async(req)
+            # req = ChangeState.Request()
+            # req.state = 'COLLABORATIVE_LIFT'
+            # self.change_state_client_.call_async(req)
+            msg = String()
+            msg.data = 'COLLABORATIVE_LIFT'
+            self.state_pub_.publish(msg)
             # Check spin until future complete https://docs.ros.org/en/foxy/Tutorials/Beginner-Client-Libraries/Writing-A-Simple-Py-Service-And-Client.html
 
     def pc_callback(self, msg):
@@ -99,7 +109,7 @@ class SemanticSegmentation(Node):
         pc_msg = self.latest_pc_msg
 
 
-        if self.state =="SEARCH" or self.state == 'SERVOING' or self.state == 'APPROACH':
+        if self.state in self.segmentation_states:
             #self.get_logger().debug("Entered!".format(msg.data))
             img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             img = img.astype("float32")
@@ -160,12 +170,14 @@ class SemanticSegmentation(Node):
                             self.large_target_centroid = self.trackers[i].confirmedCentroid
                             self.large_target_id = i+1
 
+
                             print("Reporting object " + self.object_ids[i+1])
                             report = StringVec()
                             report.data = ['large', str(int(self.large_target_centroid[0])), str(int(self.large_target_centroid[1]))]
                             self.report_pub_.publish(report)
                             self.waiting_for_response = True
 
+            # this never executes
             if self.latest_pc_msg and (self.state == 'SERVOING' or self.state == 'APPROACH'):
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.small_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                 mask = mask[:,:,0].astype(np.uint8)
@@ -222,6 +234,63 @@ class SemanticSegmentation(Node):
                             self.get_logger().warn("Too far from an object!".format(msg.data))
 
 
+            if self.latest_pc_msg and self.state == 'COLLABORATIVE_LIFT' or self.state == 'COLLABORATIVE_APPROACH':
+                mask = np.where(np.all(self.seg_mask == self.color_codes[self.large_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
+                mask = mask[:,:,0].astype(np.uint8)
+
+                # find contours
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                centroids = []
+
+
+                if len(contours) != 0:
+                    # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
+
+                    for c in contours:
+                        if cv2.contourArea(c) > 15:
+                            x,y,w,h = cv2.boundingRect(c)
+                            cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+
+                            moments = cv2.moments(c)
+                            if moments["m00"] > 0:
+                                cX = int(moments["m10"] / moments["m00"])
+                                cY = int(moments["m01"] / moments["m00"])	
+
+                                centroids.append((cX,cY))
+                        # else: 
+                        #     self.get_logger().warn("Contours of an object too small!")
+
+                else: 
+                    self.get_logger().warn("No centroids found!")
+
+
+                if len(centroids) != 0:
+                    objects = self.target_tracker.update(centroids)
+                    if len(objects.keys()) != 0:
+                        target_object_id = min(objects.keys())
+                        self.large_target_centroid = objects[target_object_id]
+
+                        text = "target object"
+                        cv2.putText(self.seg_mask, text, (self.large_target_centroid[0] - 10, self.large_target_centroid[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                        cv2.circle(self.seg_mask, (self.large_target_centroid[0], self.large_target_centroid[1]), 4, (255, 255, 255), -1)
+
+                        pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
+
+                        (x,y,z,_) = pc_array[self.large_target_centroid[1], self.large_target_centroid[0]]
+                        if not math.isinf(x):
+                            point_msg = PointStamped()
+                            point_msg.header = pc_msg.header
+                            point_msg.point.x = float(x)
+                            point_msg.point.y = float(y)
+                            point_msg.point.z = float(z)
+                            self.centroid_pub_.publish(point_msg)
+                        
+                        else: 
+                            self.get_logger().warn("Too far from an object!".format(msg.data))
+
+
+            
             mask_msg = self.bridge.cv2_to_imgmsg(self.seg_mask, 'rgb8')
             self.centroid_img_pub_.publish(mask_msg)
 
