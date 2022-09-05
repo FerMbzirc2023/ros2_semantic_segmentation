@@ -5,7 +5,7 @@ from collections import OrderedDict
 import numpy as np
 
 class CentroidTracker:
-    def __init__(self, threshAppeared = 1, distThresh = 25, maxDisappeared=5):
+    def __init__(self, threshAppeared = 10, distThresh = 25, maxDisappeared=5):
         self.nextObjectID = 0
         self.objects = OrderedDict()
         self.bboxes = OrderedDict()

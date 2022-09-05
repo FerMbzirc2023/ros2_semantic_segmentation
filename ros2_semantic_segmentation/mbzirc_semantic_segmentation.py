@@ -36,7 +36,7 @@ class SemanticSegmentation(Node):
         self.state_pub_ = self.create_publisher(String, 'state', 1)
         #self.change_state_client_ = self.create_client(ChangeState, "change_state")
 
-        self.declare_parameter("collaborative_lift/distance", 0.5)
+        self.declare_parameter("collaborative_lift/distance", 30)
         self.collaborative_delta = self.get_parameter("collaborative_lift/distance").value
         
         self.bridge = CvBridge()
@@ -46,6 +46,7 @@ class SemanticSegmentation(Node):
         self.get_logger().info('Model loaded')
 
         self.gripper_mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
+        self.kernel = np.ones((6, 6), np.uint8)
         
         self.state = "SEARCH"  
         self.small_target_identified = False
@@ -243,6 +244,7 @@ class SemanticSegmentation(Node):
             if self.latest_pc_msg and self.state == 'COLLABORATIVE_LIFT' or self.state == 'COLLABORATIVE_APPROACH':
                 mask = np.where(np.all(self.seg_mask == self.color_codes[self.large_target_id], axis=-1, keepdims=True), [255, 255, 255], [0, 0, 0])
                 mask = mask[:,:,0].astype(np.uint8)
+                mask = cv2.erode(mask, self.kernel) 
 
                 # find contours
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -273,38 +275,50 @@ class SemanticSegmentation(Node):
                     if len(objects.keys()) != 0:
                         target_object_id = min(objects.keys())
                         self.large_target_centroid = objects[target_object_id]
+                        c = np.array(self.large_target_centroid)
 
                         if target_object_id in self.target_tracker.bboxes:
                             bbox = self.target_tracker.bboxes[target_object_id]
-                            pt1 = bbox[0]
-                            pt2 = bbox[2]
+                            pt1 = np.array(bbox[1])
+                            pt2 = np.array(bbox[2])
+                            pt3 = np.array(bbox[3])
 
-                            delta_x = pt2[0] - pt1[0]
-                            delta_y = pt2[1] - pt1[1]
-                            delta_z = math.dist(pt1, pt2)
-                            theta = math.asin(delta_y/delta_z)
+                            if math.dist(pt1,pt2) < math.dist(pt2,pt3):
+                                height_p = pt1 + (pt2-pt1)/2
 
-                            ct_x = self.large_target_centroid[0]
-                            ct_y = self.large_target_centroid[1]
+                            else:
+                                height_p = pt2 + (pt3-pt2)/2
 
-                            test_delta_x = int(20 * math.sin(theta))
-                            test_delta_y = int(20 * math.cos(theta))
-
-                            world_delta_z = self.collaborative_delta/2 * math.sin(theta)
-                            world_delta_y = self.collaborative_delta/2 * math.cos(theta)
-
-
+                            # visualization
+                            c_h = height_p - c
+                            d = math.dist(c, height_p)
+                            c_h_scaled = c_h * 20/d
+                            coll1 = c + c_h_scaled
+                            coll2 = c - c_h_scaled
+                            cv2.circle(self.seg_mask, (int(coll1[0]), int(coll1[1])), 4, (0, 0, 255), -1)
+                            cv2.circle(self.seg_mask, (int(coll2[0]), int(coll2[1])), 4, (0, 0, 255), -1)
+                        
                             text = "target object"
                             cv2.putText(self.seg_mask, text, (self.large_target_centroid[0] - 10, self.large_target_centroid[1] - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
                             cv2.circle(self.seg_mask, (self.large_target_centroid[0], self.large_target_centroid[1]), 4, (255, 255, 255), -1)
-                            cv2.circle(self.seg_mask, (self.large_target_centroid[0]+test_delta_x, self.large_target_centroid[1]-test_delta_y), 4, (0, 0, 255), -1)
-                            cv2.circle(self.seg_mask, (self.large_target_centroid[0]-test_delta_x, self.large_target_centroid[1]+test_delta_y), 4, (0, 255, 0), -1)
 
 
                             pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
 
                             (x,y,z,_) = pc_array[self.large_target_centroid[1], self.large_target_centroid[0]]
+                            (hp_x,hp_y,hp_z,_) = pc_array[int(height_p[1]), int(height_p[0])]
+
+                            world_c = np.array([y,z])
+                            world_hp = np.array([hp_y, hp_z])
+
+                            world_c_hp = world_hp - world_c
+                            world_d = math.dist(world_hp, world_c)
+                            world_c_hp_scaled = world_c_hp * self.collaborative_delta/d
+                            world_coll1 = world_c + world_c_hp_scaled
+                            world_coll2 = world_c - world_c_hp_scaled
+
+
                             if not math.isinf(x):
                                 point_msg = PointStamped()
                                 point_msg.header = pc_msg.header
@@ -314,13 +328,13 @@ class SemanticSegmentation(Node):
                                 self.centroid_pub_.publish(point_msg)
 
                                 point_msg.point.x = float(x)
-                                point_msg.point.y = float(y-world_delta_y)
-                                point_msg.point.z = float(z+world_delta_z)
+                                point_msg.point.y = float(world_coll1[0])
+                                point_msg.point.z = float(world_coll1[1])
                                 self.collaborative_pub1_.publish(point_msg)
 
                                 point_msg.point.x = float(x)
-                                point_msg.point.y = float(y+world_delta_y)
-                                point_msg.point.z = float(z-world_delta_z)
+                                point_msg.point.y = float(world_coll2[0])
+                                point_msg.point.z = float(world_coll2[1])
                                 self.collaborative_pub2_.publish(point_msg)
                             
                             else: 
