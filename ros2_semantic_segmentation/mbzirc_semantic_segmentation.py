@@ -30,9 +30,14 @@ class SemanticSegmentation(Node):
         self.centroid_img_pub_ = self.create_publisher(Image, 'semantic_segmentation/detected_centroids', 1)
         self.report_pub_ = self.create_publisher(StringVec, 'target_report', 1)
         self.centroid_pub_ = self.create_publisher(PointStamped, 'semantic_segmentation/detected_point', 1)
+        self.collaborative_pub1_ = self.create_publisher(PointStamped, 'semantic_segmentation/collaborative_point_1', 1)
+        self.collaborative_pub2_ = self.create_publisher(PointStamped, 'semantic_segmentation/collaborative_point_2', 1)
 
         self.state_pub_ = self.create_publisher(String, 'state', 1)
         #self.change_state_client_ = self.create_client(ChangeState, "change_state")
+
+        self.declare_parameter("collaborative_lift/distance", 0.5)
+        self.collaborative_delta = self.get_parameter("collaborative_lift/distance").value
         
         self.bridge = CvBridge()
 
@@ -71,6 +76,7 @@ class SemanticSegmentation(Node):
 
         self.segmentation_states = ['SEARCH', 'SERVOING', 'APPROACH', 'COLLABORATIVE_LIFT', 'COLLABORATIVE_APPROACH']
 
+
     def state_callback(self, msg):
         self.get_logger().info("New state: {}".format(msg.data))
         self.state = msg.data
@@ -81,11 +87,11 @@ class SemanticSegmentation(Node):
 
         elif self.state == 'SERVOING' or self.state == 'APPROACH':
             self.target_tracker = CentroidTracker()
-            self.target_tracker.update([self.small_target_centroid])
+            self.target_tracker.update([self.small_target_centroid],[])
         
         elif self.state == 'COLLABORATIVE_LIFT' or self.state == 'COLLABORATIVE_APPROACH':
             self.target_tracker = CentroidTracker()
-            self.target_tracker.update([self.large_target_centroid])
+            self.target_tracker.update([self.large_target_centroid],[])
 
     def status_callback(self, msg):
         print("Recieved target report status: " + msg.data)
@@ -142,7 +148,7 @@ class SemanticSegmentation(Node):
                                 cX = int(moments["m10"] / moments["m00"])
                                 cY = int(moments["m01"] / moments["m00"])	
                 
-                                objects = self.trackers[i].update([(cX, cY)])
+                                objects = self.trackers[i].update([(cX, cY)],[])
                                 for (objectID, centroid) in objects.items():
                                     text = "ID {}".format(objectID)
                                     cv2.putText(self.seg_mask, text, (centroid[0] - 10, centroid[1] - 10),
@@ -209,7 +215,7 @@ class SemanticSegmentation(Node):
 
 
                 if len(centroids) != 0:
-                    objects = self.target_tracker.update(centroids)
+                    objects = self.target_tracker.update(centroids, [])
                     if len(objects.keys()) != 0:
                         target_object_id = min(objects.keys())
                         self.small_target_centroid = objects[target_object_id]
@@ -241,22 +247,20 @@ class SemanticSegmentation(Node):
                 # find contours
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                 centroids = []
-
+                bboxes = [] 
 
                 if len(contours) != 0:
                     # cv2.drawContours(self.seg_mask, contours, -1, (255,255,255), 3)
 
                     for c in contours:
                         if cv2.contourArea(c) > 15:
-                            x,y,w,h = cv2.boundingRect(c)
-                            cv2.rectangle(self.seg_mask,(x,y),(x+w,y+h),(0,255,0),2)
+                            rect = cv2.minAreaRect(c)
+                            box = np.int0(cv2.boxPoints(rect))
+                            cv2.drawContours(self.seg_mask, [box], 0, (0,255,0), 3) 
+                            centroid, dims, angle = rect
+                            centroids.append((int(centroid[0]), int(centroid[1]))) 
+                            bboxes.append(box)
 
-                            moments = cv2.moments(c)
-                            if moments["m00"] > 0:
-                                cX = int(moments["m10"] / moments["m00"])
-                                cY = int(moments["m01"] / moments["m00"])	
-
-                                centroids.append((cX,cY))
                         # else: 
                         #     self.get_logger().warn("Contours of an object too small!")
 
@@ -265,29 +269,62 @@ class SemanticSegmentation(Node):
 
 
                 if len(centroids) != 0:
-                    objects = self.target_tracker.update(centroids)
+                    objects = self.target_tracker.update(centroids, bboxes)
                     if len(objects.keys()) != 0:
                         target_object_id = min(objects.keys())
                         self.large_target_centroid = objects[target_object_id]
 
-                        text = "target object"
-                        cv2.putText(self.seg_mask, text, (self.large_target_centroid[0] - 10, self.large_target_centroid[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
-                        cv2.circle(self.seg_mask, (self.large_target_centroid[0], self.large_target_centroid[1]), 4, (255, 255, 255), -1)
+                        if target_object_id in self.target_tracker.bboxes:
+                            bbox = self.target_tracker.bboxes[target_object_id]
+                            pt1 = bbox[0]
+                            pt2 = bbox[2]
 
-                        pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
+                            delta_x = pt2[0] - pt1[0]
+                            delta_y = pt2[1] - pt1[1]
+                            delta_z = math.dist(pt1, pt2)
+                            theta = math.asin(delta_y/delta_z)
 
-                        (x,y,z,_) = pc_array[self.large_target_centroid[1], self.large_target_centroid[0]]
-                        if not math.isinf(x):
-                            point_msg = PointStamped()
-                            point_msg.header = pc_msg.header
-                            point_msg.point.x = float(x)
-                            point_msg.point.y = float(y)
-                            point_msg.point.z = float(z)
-                            self.centroid_pub_.publish(point_msg)
-                        
-                        else: 
-                            self.get_logger().warn("Too far from an object!".format(msg.data))
+                            ct_x = self.large_target_centroid[0]
+                            ct_y = self.large_target_centroid[1]
+
+                            test_delta_x = int(20 * math.sin(theta))
+                            test_delta_y = int(20 * math.cos(theta))
+
+                            world_delta_z = self.collaborative_delta/2 * math.sin(theta)
+                            world_delta_y = self.collaborative_delta/2 * math.cos(theta)
+
+
+                            text = "target object"
+                            cv2.putText(self.seg_mask, text, (self.large_target_centroid[0] - 10, self.large_target_centroid[1] - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            cv2.circle(self.seg_mask, (self.large_target_centroid[0], self.large_target_centroid[1]), 4, (255, 255, 255), -1)
+                            cv2.circle(self.seg_mask, (self.large_target_centroid[0]+test_delta_x, self.large_target_centroid[1]-test_delta_y), 4, (0, 0, 255), -1)
+                            cv2.circle(self.seg_mask, (self.large_target_centroid[0]-test_delta_x, self.large_target_centroid[1]+test_delta_y), 4, (0, 255, 0), -1)
+
+
+                            pc_array = rnp.point_cloud2.pointcloud2_to_array(pc_msg)
+
+                            (x,y,z,_) = pc_array[self.large_target_centroid[1], self.large_target_centroid[0]]
+                            if not math.isinf(x):
+                                point_msg = PointStamped()
+                                point_msg.header = pc_msg.header
+                                point_msg.point.x = float(x)
+                                point_msg.point.y = float(y)
+                                point_msg.point.z = float(z)
+                                self.centroid_pub_.publish(point_msg)
+
+                                point_msg.point.x = float(x)
+                                point_msg.point.y = float(y-world_delta_y)
+                                point_msg.point.z = float(z+world_delta_z)
+                                self.collaborative_pub1_.publish(point_msg)
+
+                                point_msg.point.x = float(x)
+                                point_msg.point.y = float(y+world_delta_y)
+                                point_msg.point.z = float(z-world_delta_z)
+                                self.collaborative_pub2_.publish(point_msg)
+                            
+                            else: 
+                                self.get_logger().warn("Too far from an object!".format(msg.data))
 
 
             

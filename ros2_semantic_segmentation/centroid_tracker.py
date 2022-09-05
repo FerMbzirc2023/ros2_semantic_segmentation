@@ -5,9 +5,10 @@ from collections import OrderedDict
 import numpy as np
 
 class CentroidTracker:
-    def __init__(self, threshAppeared = 10, distThresh = 25, maxDisappeared=5):
+    def __init__(self, threshAppeared = 1, distThresh = 25, maxDisappeared=5):
         self.nextObjectID = 0
         self.objects = OrderedDict()
+        self.bboxes = OrderedDict()
         # number of consecutive frames object has appeared
         self.appeared = OrderedDict()
         # number of consecutive frames object has been marked as "disappeared"
@@ -20,18 +21,22 @@ class CentroidTracker:
         self.maxDisappeared = maxDisappeared
         self.distThresh = distThresh
 
-    def register(self, centroid):
+    def register(self, centroid, bbox):
         self.objects[self.nextObjectID] = centroid
+        if len(bbox) > 0:
+            self.bboxes[self.nextObjectID] = bbox
         self.appeared[self.nextObjectID] = 0
         self.disappeared[self.nextObjectID] = 0
         self.nextObjectID += 1
 
     def deregister(self, objectID):
         del self.objects[objectID]
+        if objectID in self.bboxes: 
+            del self.bboxes[objectID]
         del self.appeared[objectID]
         del self.disappeared[objectID]
 
-    def update(self, centroids):
+    def update(self, centroids, bboxes):
         if len(centroids) == 0:
             for objectID in list(self.disappeared.keys()):
                 self.disappeared[objectID] += 1
@@ -41,7 +46,10 @@ class CentroidTracker:
 
         if len(self.objects) == 0:
             for i in range(len(centroids)):
-                self.register(centroids[i])
+                if len(bboxes) > 0:
+                    self.register(centroids[i], bboxes[i])
+                else:
+                    self.register(centroids[i],[])
 
         else:
             objectIDs = list(self.objects.keys())
@@ -62,6 +70,8 @@ class CentroidTracker:
                 objectID = objectIDs[row]
                 if D[row,col] < self.distThresh:
                     self.objects[objectID] = centroids[col]
+                    if len(bboxes) > 0:
+                        self.bboxes[objectID] = bboxes[col]
                     self.appeared[objectID] += 1
                     self.disappeared[objectID] = 0
 
@@ -84,6 +94,9 @@ class CentroidTracker:
                         self.deregister(objectID)
             else:
                 for col in unusedCols:
-                    self.register(centroids[col])
+                    if len(bboxes) > 0:
+                        self.register(centroids[col], bboxes[col])
+                    else:
+                        self.register(centroids[col],[])
 
         return self.objects
