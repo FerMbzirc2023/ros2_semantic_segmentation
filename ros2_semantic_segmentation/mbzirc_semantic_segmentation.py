@@ -33,8 +33,8 @@ class SemanticSegmentation(Node):
         self.collaborative_pub1_ = self.create_publisher(PointStamped, 'semantic_segmentation/collaborative_point_1', 1)
         self.collaborative_pub2_ = self.create_publisher(PointStamped, 'semantic_segmentation/collaborative_point_2', 1)
 
-        self.state_pub_ = self.create_publisher(String, 'state', 1)
-        #self.change_state_client_ = self.create_client(ChangeState, "change_state")
+        #self.state_pub_ = self.create_publisher(String, 'state', 1)
+        self.change_state_client_ = self.create_client(ChangeState, "change_state")
 
         self.declare_parameter("collaborative_lift/distance", 30)
         self.collaborative_delta = self.get_parameter("collaborative_lift/distance").value
@@ -48,7 +48,7 @@ class SemanticSegmentation(Node):
         self.gripper_mask = cv2.imread('/home/developer/mbzirc_ws/src/ros2_semantic_segmentation/data/mask.png', cv2.IMREAD_GRAYSCALE)
         self.kernel = np.ones((6, 6), np.uint8)
         
-        self.state = "SEARCH"  
+        self.state = "IDLE"  
         self.small_target_identified = False
         self.targets_identified = False
         self.waiting_for_response = False
@@ -101,12 +101,12 @@ class SemanticSegmentation(Node):
             self.small_target_identified = True
         elif msg.data == 'large_object_id_success':
             self.targets_identified = True
-            # req = ChangeState.Request()
-            # req.state = 'COLLABORATIVE_LIFT'
-            # self.change_state_client_.call_async(req)
-            msg = String()
-            msg.data = 'COLLABORATIVE_LIFT'
-            self.state_pub_.publish(msg)
+            req = ChangeState.Request()
+            req.state = 'COLLABORATIVE_LIFT'
+            self.change_state_client_.call_async(req)
+            # msg = String()
+            # msg.data = 'COLLABORATIVE_LIFT'
+            # self.state_pub_.publish(msg)
             # Check spin until future complete https://docs.ros.org/en/foxy/Tutorials/Beginner-Client-Libraries/Writing-A-Simple-Py-Service-And-Client.html
 
     def pc_callback(self, msg):
